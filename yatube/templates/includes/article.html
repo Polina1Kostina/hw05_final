@@ -1,0 +1,19 @@
+{% load thumbnail %}
+<ul>
+  <li>
+    Автор: {{ post.author.get_full_name }}
+    <a href={% url 'posts:profile' post.author %}>
+      все посты пользователя
+    </a>
+  </li>
+  <li>
+    Дата публикации: {{ post.pub_date|date:"d E Y" }}
+  </li>
+</ul>
+{% thumbnail post.image "300x300" crop="center" as im %}
+  <img src="{{ im.url }}" width="{{ im.width }}" height="{{ im.height }}">
+{% endthumbnail %}      
+<p>
+  {{ post.text }}
+  <a href="{% url 'posts:post_detail' post.pk %}">подробная информация </a>
+</p>
