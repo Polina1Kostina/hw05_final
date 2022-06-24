@@ -4,11 +4,13 @@ from .models import Post, Group, User, Follow
 from .forms import PostForm, CommentForm
 from django.shortcuts import redirect
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.cache import cache_page
 
 
 posts_per_page: int = 10
 
 
+@cache_page(20)
 def index(request):
     template = 'posts/index.html'
     posts = Post.objects.select_related('author')
@@ -45,11 +47,7 @@ def profile(request, username):
     page_mumber = request.GET.get('page')
     page_obj = paginator.get_page(page_mumber)
     if request.user.is_authenticated:
-        follower = Follow.objects.filter(user=request.user, author=author)
-        if follower.exists():
-            following = True
-        else:
-            following = False
+        following = Follow.objects.filter(user=request.user, author=author)
     else:
         following = None
     context = {
@@ -154,8 +152,7 @@ def follow_index(request):
 def profile_follow(request, username):
     author = get_object_or_404(User, username=username)
     user = request.user
-    follower = Follow.objects.filter(user=user, author=author)
-    if user != author and not follower.exists():
+    if user != author:
         new_follow = Follow()
         new_follow.user = user
         new_follow.author = author

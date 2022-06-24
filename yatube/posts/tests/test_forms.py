@@ -24,6 +24,11 @@ class PostCreateFormTests(TestCase):
             group=cls.group,
             author=cls.user,
         )
+        Comment.objects.create(
+            post=cls.post,
+            author=cls.user,
+            text='Это я сделал такой крутой пост!'
+        )
 
     def test_create_post_authorized_client(self):
         """С валидной формы создаётся запись поста
@@ -77,7 +82,7 @@ class PostCreateFormTests(TestCase):
             content=small_gif,
             content_type='image/gif'
         )
-        form_data = {
+        form_data_post = {
             'text': 'Тестовый текст22222',
             'image': uploaded,
         }
@@ -89,12 +94,12 @@ class PostCreateFormTests(TestCase):
         }
         for reverse_name, redirect_url in objects.items():
             with self.subTest(reverse_name=reverse_name):
-                response = self.guest_client.post(
+                response_1 = self.guest_client.post(
                     reverse_name,
-                    data=form_data,
+                    data=form_data_post,
                     follow=True
                 )
-                self.assertRedirects(response, redirect_url)
+                self.assertRedirects(response_1, redirect_url)
                 self.assertEqual(Post.objects.count(), posts_count)
 
     def test_comment_post_authorized_client(self):
@@ -108,9 +113,26 @@ class PostCreateFormTests(TestCase):
             data=form_data,
             follow=True
         )
-        add_comment = Comment.objects.get(id=1)
+        add_comment = Comment.objects.get(id=2)
         self.assertRedirects(response, reverse(
             'posts:post_detail', kwargs={'post_id': 1})
         )
         self.assertEqual(Comment.objects.count(), comment_count + 1)
         self.assertEqual(add_comment.text, form_data['text'])
+
+    def test_comment_post_guest_client(self):
+        """Запись поста не комментируется
+        неавторизованным пользователем."""
+        comments_count = Comment.objects.count()
+        form_data_comment = {
+            'text': 'Очень, очень крутой пост!!!',
+        }
+        reverse_name = reverse('posts:add_comment', kwargs={'post_id': 1})
+        redirect_url = '/auth/login/?next=/posts/1/comment/'
+        response = self.guest_client.post(
+            reverse_name,
+            data=form_data_comment,
+            follow=True
+        )
+        self.assertRedirects(response, redirect_url)
+        self.assertEqual(Comment.objects.count(), comments_count)

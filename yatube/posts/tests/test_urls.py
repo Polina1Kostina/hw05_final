@@ -1,6 +1,7 @@
 from django.test import TestCase, Client
 from django.contrib.auth import get_user_model
 from posts.models import Post, Group
+from django.core.cache import cache
 
 
 User = get_user_model()
@@ -26,6 +27,9 @@ class StaticURLTests(TestCase):
             author=cls.user1
         )
 
+    def setUp(self):
+        cache.clear()
+
     def test_post_list_url_exists_at_desired_location_guest_client(self):
         """Проверка доступности адресов для неавторизованного пользователя."""
         posts_urls = {
@@ -36,6 +40,9 @@ class StaticURLTests(TestCase):
             '/create/': 'Found',
             '/posts/1/edit/': 'Found',
             '/unexisting_page/': 'Not Found',
+            '/posts/1/comment/': 'Found',
+            '/profile/HasName/follow/': 'Found',
+            '/profile/HasName/unfollow/': 'Found',
         }
         for address, st_code in posts_urls.items():
             with self.subTest(address=address):

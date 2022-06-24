@@ -1,9 +1,11 @@
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.urls import reverse
-from posts.models import Post, Group, Follow
+from posts.models import Post, Group, Comment, Follow
 from django import forms
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_list_or_404, get_object_or_404
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.cache import cache
 
 
 User = get_user_model()
@@ -28,10 +30,24 @@ class PostPagesTests(TestCase):
         cls.authorized_client_3 = Client()
         cls.authorized_client_3.force_login(cls.user_3)
         cls.guest_client = Client()
+        small_gif = (
+            b'\x47\x49\x46\x38\x39\x61\x02\x00'
+            b'\x01\x00\x80\x00\x00\x00\x00\x00'
+            b'\xFF\xFF\xFF\x21\xF9\x04\x00\x00'
+            b'\x00\x00\x00\x2C\x00\x00\x00\x00'
+            b'\x02\x00\x01\x00\x00\x02\x02\x0C'
+            b'\x0A\x00\x3B'
+        )
+        uploaded = SimpleUploadedFile(
+            name='small.gif',
+            content=small_gif,
+            content_type='image/gif'
+        )
         Post.objects.bulk_create([
             Post(text='Тестовый текст1',
                  group=cls.group[0],
                  author=cls.user,
+                 image=uploaded,
                  pk=1),
             Post(text='Тестовый текст2',
                  group=cls.group[0],
@@ -46,6 +62,18 @@ class PostPagesTests(TestCase):
                  author=cls.user,
                  pk=4)
         ])
+        Comment.objects.create(
+            post=get_object_or_404(Post, pk=4),
+            author=cls.user,
+            text='Крутой пост!'
+        )
+        Follow.objects.create(
+            user=cls.user_2,
+            author=cls.user
+        )
+
+    def setUp(self):
+        cache.clear()
 
     def test_pages_uses_correct_template_authorized_client(self):
         """URL-адреса используют соответствующии шаблоны
@@ -66,10 +94,12 @@ class PostPagesTests(TestCase):
                     'posts/post_create.html'
                 ),
                 reverse('posts:post_create'): 'posts/post_create.html',
+                reverse('posts:follow_index'): 'posts/follow.html',
             }
             for reverse_name, template in templates_pages_names.items():
                 with self.subTest(reverse_name=reverse_name):
                     response = self.authorized_client.get(reverse_name)
+                    cache.clear()
                     self.assertTemplateUsed(response, template)
 
     def test_pages_uses_correct_template_guest_client(self):
@@ -91,6 +121,7 @@ class PostPagesTests(TestCase):
             for reverse_name, template in templates_pages_names.items():
                 with self.subTest(reverse_name=reverse_name):
                     response = self.guest_client.get(reverse_name)
+                    cache.clear()
                     self.assertTemplateUsed(response, template)
 
     def test_index_page_show_correct_context(self):
@@ -102,6 +133,7 @@ class PostPagesTests(TestCase):
             first_object.author.username: self.post[0].author.username,
             first_object.text: self.post[0].text,
             first_object.group.title: self.post[0].group.title,
+            first_object.image: self.post[0].image,
         }
         for response_name, reverse_name in context_objects.items():
             with self.subTest(reverse_name=reverse_name):
@@ -113,9 +145,12 @@ class PostPagesTests(TestCase):
             reverse('posts:post_detail', kwargs={'post_id': 4})
         )
         self.assertEqual(Post.objects.get(id=4), response.context['posts'])
+        self.assertEqual(
+            Comment.objects.get(id=1), response.context['comments'][0]
+        )
 
     def test_posts_page_show_correct_context(self):
-        """Шаблоны profile и group_list сформированы"""
+        """Шаблоны profile, follow и group_list сформированы"""
         """с правильным контекстом."""
         self.author = get_object_or_404(User, username=self.user)
         self.group = get_object_or_404(Group, slug='slug1')
@@ -125,6 +160,9 @@ class PostPagesTests(TestCase):
             ),
             reverse('posts:group_list', kwargs={'slug': 'slug1'}): (
                 self.group.post.select_related('group')
+            ),
+            reverse('posts:follow_index'): (
+                Post.objects.filter(author__following__user=self.user_2)
             ),
         }
         for reverse_name, response_name in objects.items():
@@ -171,7 +209,6 @@ class PostPagesTests(TestCase):
     def test_posts_page_show_correct_context(self):
         """Новая запись пользователя появляется в ленте тех, кто на него
         подписан и не появляется в ленте тех, кто не подписан."""
-        Follow.objects.create(user=self.user_2, author=self.user)
         reverse_name = 'posts:follow_index'
         response_1 = self.authorized_client_2.get(
             reverse(reverse_name)
@@ -215,8 +252,11 @@ class PaginatorViewsTest(TestCase):
                         + str(i), group=cls.group2, author=cls.user2)]
         Post.objects.bulk_create(article)
 
+    def setUp(self):
+        cache.clear()
+
     def test_first_page_contains_ten_posts(self):
-        """На страницах index, group_list, profile выводится
+        """На первых страницах index, group_list, profile, follow выводится
         правильное количество постов"""
         posts_per_first_page_1: int = 10
         posts_per_first_page_2: int = 7
@@ -233,9 +273,44 @@ class PaginatorViewsTest(TestCase):
                 self.assertEqual(len(response.context['page_obj']), numb)
 
     def test_second_page_contains_four_posts(self):
-        """На странице index выводится 4 поста"""
+        """На второй странице index выводится 4 поста"""
         posts_per_second_page: int = 4
         response = self.client.get(reverse('posts:index') + '?page=2')
         self.assertEqual(len(response.context['page_obj']), (
             posts_per_second_page)
         )
+
+
+class FollowViewsTest(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.user1 = User.objects.create(username='Name')
+        cls.user2 = User.objects.create(username='NoName')
+        cls.user3 = User.objects.create(username='NewName')
+        cls.authorized_client = Client()
+        cls.authorized_client.force_login(cls.user1)
+
+        cls.guest_client = Client()
+        cls.group = Group.objects.create(
+            title='cats', description='Описание', slug='cat'
+        )
+        Follow.objects.create(
+            user=cls.user1,
+            author=cls.user2
+        )
+
+    def test_follow_add_and_delete_authorized_client(self):
+        """Авторизованный пользователь может подписываться
+        на других пользователей и удалять их из подписок"""
+        follow_count_1 = len(get_list_or_404(Follow, user=self.user1))
+        self.authorized_client.get(
+            reverse('posts:profile_follow', kwargs={'username': 'NewName'})
+        )
+        follow_count_2 = len(get_list_or_404(Follow, user=self.user1))
+        self.assertEqual(follow_count_1 + 1, follow_count_2)
+        self.authorized_client.get(
+            reverse('posts:profile_unfollow', kwargs={'username': 'NewName'})
+        )
+        follow_count_3 = len(get_list_or_404(Follow, user=self.user1))
+        self.assertEqual(follow_count_2 - 1, follow_count_3)
