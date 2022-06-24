@@ -327,4 +327,3 @@ class FollowViewsTest(TestCase):
         )
         follow_count_2 = len(get_list_or_404(Follow, user=self.user1))
         self.assertEqual(follow_count_1, follow_count_2)
-
