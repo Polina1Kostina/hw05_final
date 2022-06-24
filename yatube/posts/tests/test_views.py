@@ -314,3 +314,17 @@ class FollowViewsTest(TestCase):
         )
         follow_count_3 = len(get_list_or_404(Follow, user=self.user1))
         self.assertEqual(follow_count_2 - 1, follow_count_3)
+
+    def test_follow_one_time_authorized_client(self):
+        """Авторизованный пользователь может подписаться
+        на другого пользователя только один раз"""
+        self.authorized_client.get(
+            reverse('posts:profile_follow', kwargs={'username': 'NewName'})
+        )
+        follow_count_1 = len(get_list_or_404(Follow, user=self.user1))
+        self.authorized_client.get(
+            reverse('posts:profile_follow', kwargs={'username': 'NewName'})
+        )
+        follow_count_2 = len(get_list_or_404(Follow, user=self.user1))
+        self.assertEqual(follow_count_1, follow_count_2)
+
